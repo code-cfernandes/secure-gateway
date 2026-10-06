@@ -1,0 +1,7 @@
+# Só para validação local: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# O RedisInsight fica em http://localhost:8080/redisinsight/ (via gateway). A porta abaixo é opcional,
+# para conectar aplicações locais direto no Redis de desenvolvimento.
+services:
+  redis:
+    ports:
+      - "127.0.0.1:16379:6379"

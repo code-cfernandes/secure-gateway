@@ -1,0 +1,7 @@
+# Só para validação local: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+# O pgAdmin fica em http://localhost:8080/pgadmin/ (via gateway). A porta abaixo é opcional,
+# para conectar ferramentas/aplicações locais direto no banco de desenvolvimento.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:15432:5432"

@@ -5,7 +5,7 @@ services:
     image: redis:8-alpine
     container_name: redis
     restart: unless-stopped
-    # Sem "ports": acessível só pela services-net (RedisInsight, túnel).
+    # Sem "ports": acessível só pela services-net. O RedisInsight é publicado pelo gateway.
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?defina REDIS_PASSWORD}
       REDISCLI_AUTH: ${REDIS_PASSWORD}
@@ -33,6 +33,8 @@ services:
       # Criptografa as senhas que o RedisInsight guarda no volume.
       RI_ENCRYPTION_KEY: ${REDISINSIGHT_ENCRYPTION_KEY:?defina REDISINSIGHT_ENCRYPTION_KEY}
       RI_ACCEPT_TERMS_AND_CONDITIONS: "true"
+      # Servido pelo gateway em /redisinsight/
+      RI_PROXY_PATH: /redisinsight
     volumes:
       - redisinsight-data:/data
     networks:

@@ -34,8 +34,26 @@ http {
         include /etc/nginx/secrets/api_keys.map;
     }
 
-    log_format gateway '$remote_addr client="$api_client" [$time_local] "$request" '
-                       '$status $body_bytes_sent rt=$request_time ray=$http_cf_ray';
+    # Painéis web (pgAdmin, RedisInsight) ficam atrás do Cloudflare Access, que injeta
+    # Cf-Access-Jwt-Assertion. Sem esse cabeçalho, o Access não está protegendo a rota
+    # (aplicação apagada/mal configurada) e o gateway bloqueia em vez de expor o painel.
+    map $http_cf_access_jwt_assertion $cf_access_missing {
+        default 0;
+        ""      1;
+    }
+    map "${REQUIRE_CF_ACCESS}:$cf_access_missing" $block_ui {
+        default 0;
+        "on:1"  1;
+    }
+
+    # WebSocket (Query Tool do pgAdmin, RedisInsight).
+    map $http_upgrade $connection_upgrade {
+        default upgrade;
+        ""      close;
+    }
+
+    log_format gateway '$remote_addr client="$api_client" user="$http_cf_access_authenticated_user_email" '
+                       '[$time_local] "$request" $status $body_bytes_sent rt=$request_time ray=$http_cf_ray';
     access_log /dev/stdout gateway;
 
     limit_req_zone $api_client         zone=per_client:10m rate=${RATE_LIMIT_PER_CLIENT};
@@ -83,6 +101,74 @@ http {
             proxy_request_buffering off;
             proxy_read_timeout 600s;
             proxy_send_timeout 600s;
+        }
+
+        # pgAdmin em https://<host>/pgadmin/ (Access + login/MFA do próprio pgAdmin)
+        location /pgadmin/ {
+            # Sem rate limit: SPAs carregam centenas de arquivos ao abrir, e só
+            # quem passou pelo Cloudflare Access chega aqui.
+            if ($block_ui) {
+                return 403 "Cloudflare Access obrigatório\n";
+            }
+
+            set $pgadmin_upstream ${PGADMIN_UPSTREAM};
+            rewrite ^/pgadmin/(.*)$ /$1 break;
+            proxy_pass http://$pgadmin_upstream;
+            proxy_http_version 1.1;
+
+            # pgAdmin gera URLs e cookies com este prefixo.
+            proxy_set_header X-Script-Name /pgadmin;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_redirect off;
+            proxy_read_timeout 600s;
+        }
+
+        location = /pgadmin {
+            return 301 /pgadmin/;
+        }
+
+        # RedisInsight em https://<host>/redisinsight/ (só Access: não tem login próprio)
+        location /redisinsight/ {
+            # Sem rate limit: SPAs carregam centenas de arquivos ao abrir, e só
+            # quem passou pelo Cloudflare Access chega aqui.
+            if ($block_ui) {
+                return 403 "Cloudflare Access obrigatório\n";
+            }
+
+            set $redisinsight_upstream ${REDISINSIGHT_UPSTREAM};
+            proxy_pass http://$redisinsight_upstream;
+            proxy_http_version 1.1;
+
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_read_timeout 600s;
+        }
+
+        # Com RI_PROXY_PATH o HTTP do RedisInsight fica sob /redisinsight/, mas o socket.io
+        # continua em /socket.io/ na raiz: aqui o prefixo é removido.
+        location /redisinsight/socket.io/ {
+            if ($block_ui) {
+                return 403 "Cloudflare Access obrigatório\n";
+            }
+
+            set $redisinsight_upstream ${REDISINSIGHT_UPSTREAM};
+            rewrite ^/redisinsight/(socket\.io/.*)$ /$1 break;
+            proxy_pass http://$redisinsight_upstream;
+            proxy_http_version 1.1;
+
+            proxy_set_header Host $host;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_read_timeout 1h;
+        }
+
+        location = /redisinsight {
+            return 301 /redisinsight/;
         }
 
         location / {

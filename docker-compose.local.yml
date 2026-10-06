@@ -1,0 +1,10 @@
+# Só para validação local: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+# Gateway em http://localhost:8080 (/ollama/, /pgadmin/, /redisinsight/), sem túnel e sem exigir Cloudflare Access.
+services:
+  gateway:
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      REQUIRE_CF_ACCESS: "off"
+  cloudflared:
+    profiles: ["tunnel"]

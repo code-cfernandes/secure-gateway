@@ -6,7 +6,7 @@ services:
     image: secure-postgres:18
     container_name: postgres
     restart: unless-stopped
-    # Sem "ports": acessível só pela services-net (pgAdmin, gateway, túnel).
+    # Sem "ports": acessível só pela services-net. O pgAdmin é publicado pelo gateway em /pgadmin/.
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?defina POSTGRES_SUPERUSER_PASSWORD}

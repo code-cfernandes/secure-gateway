@@ -9,6 +9,10 @@ services:
     # Sem "ports": o único caminho de entrada é o túnel da Cloudflare.
     environment:
       OLLAMA_UPSTREAM: ${OLLAMA_UPSTREAM:-ollama:11434}
+      PGADMIN_UPSTREAM: ${PGADMIN_UPSTREAM:-pgadmin:80}
+      REDISINSIGHT_UPSTREAM: ${REDISINSIGHT_UPSTREAM:-redisinsight:5540}
+      # on = /pgadmin/ e /redisinsight/ exigem passar pelo Cloudflare Access (produção)
+      REQUIRE_CF_ACCESS: ${REQUIRE_CF_ACCESS:-on}
       RATE_LIMIT_PER_CLIENT: ${RATE_LIMIT_PER_CLIENT:-10r/s}
       RATE_LIMIT_PER_IP: ${RATE_LIMIT_PER_IP:-20r/s}
       MAX_BODY_SIZE: ${MAX_BODY_SIZE:-50m}
