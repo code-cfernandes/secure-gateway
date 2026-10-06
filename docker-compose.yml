@@ -1,0 +1,44 @@
+# Stack para o Portainer (Stacks > Add stack > Repository) ou `docker compose up -d`.
+# Variáveis: defina no Portainer (Environment variables) ou num .env local.
+services:
+  gateway:
+    build: .
+    image: secure-gateway:latest
+    container_name: secure-gateway
+    restart: unless-stopped
+    # Sem "ports": o único caminho de entrada é o túnel da Cloudflare.
+    environment:
+      OLLAMA_UPSTREAM: ${OLLAMA_UPSTREAM:-ollama:11434}
+      RATE_LIMIT_PER_CLIENT: ${RATE_LIMIT_PER_CLIENT:-10r/s}
+      RATE_LIMIT_PER_IP: ${RATE_LIMIT_PER_IP:-20r/s}
+      MAX_BODY_SIZE: ${MAX_BODY_SIZE:-50m}
+    volumes:
+      - gateway-secrets:/etc/nginx/secrets
+    networks:
+      - services
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?defina CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - gateway
+    networks:
+      - services
+
+volumes:
+  gateway-secrets:
+
+# Rede compartilhada: conecte aqui os containers do Ollama, Redis etc.
+# (em outras stacks, declare-a como `external: true`).
+networks:
+  services:
+    name: services-net

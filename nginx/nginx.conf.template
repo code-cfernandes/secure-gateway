@@ -1,0 +1,93 @@
+# Renderizado pelo entrypoint oficial do nginx (envsubst) para /etc/nginx/nginx.conf.
+# Apenas variáveis definidas no ambiente (${VAR}) são substituídas; variáveis do nginx ($var) ficam intactas.
+#
+# Fluxo: cliente --HTTPS--> Cloudflare --túnel--> cloudflared --HTTP--> gateway:8080 --> serviços
+# O gateway não publica portas: só o cloudflared (mesma rede Docker) chega até ele.
+
+worker_processes auto;
+error_log /dev/stderr warn;
+pid /tmp/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    server_tokens off;
+
+    # DNS interno do Docker: resolve os upstreams por requisição, então o gateway
+    # sobe mesmo se algum serviço estiver parado.
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    # IP real do cliente vem da Cloudflare (o remote_addr seria o do cloudflared).
+    real_ip_header CF-Connecting-IP;
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+
+    # Chaves têm ~80 caracteres; o bucket padrão (64) não comporta.
+    map_hash_bucket_size 128;
+
+    # Identifica o cliente pela API key. Chave desconhecida/ausente => "".
+    map $http_authorization $api_client {
+        default "";
+        include /etc/nginx/secrets/api_keys.map;
+    }
+
+    log_format gateway '$remote_addr client="$api_client" [$time_local] "$request" '
+                       '$status $body_bytes_sent rt=$request_time ray=$http_cf_ray';
+    access_log /dev/stdout gateway;
+
+    limit_req_zone $api_client         zone=per_client:10m rate=${RATE_LIMIT_PER_CLIENT};
+    limit_req_zone $binary_remote_addr zone=per_ip:10m     rate=${RATE_LIMIT_PER_IP};
+    limit_req_status 429;
+
+    server {
+        listen 8080;
+
+        client_max_body_size ${MAX_BODY_SIZE};
+        add_header X-Content-Type-Options nosniff always;
+
+        location = /healthz {
+            access_log off;
+            default_type text/plain;
+            return 200 "ok\n";
+        }
+
+        # Ollama em https://<host>/ollama/...  (ex.: /ollama/api/chat, /ollama/v1/chat/completions)
+        location /ollama/ {
+            default_type application/json;
+            limit_req zone=per_ip burst=40 nodelay;
+
+            if ($api_client = "") {
+                add_header WWW-Authenticate 'Bearer realm="gateway"' always;
+                return 401 '{"error":"unauthorized"}\n';
+            }
+
+            limit_req zone=per_client burst=20 nodelay;
+
+            set $ollama_upstream ${OLLAMA_UPSTREAM};
+            rewrite ^/ollama/(.*)$ /$1 break;
+            proxy_pass http://$ollama_upstream;
+            proxy_http_version 1.1;
+
+            # Ollama só aceita Host "local" quando escuta em loopback.
+            proxy_set_header Host localhost;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Gateway-Client $api_client;
+            # Não repassa a API key para o upstream.
+            proxy_set_header Authorization "";
+
+            # Respostas em streaming (tokens) e gerações longas.
+            proxy_buffering off;
+            proxy_request_buffering off;
+            proxy_read_timeout 600s;
+            proxy_send_timeout 600s;
+        }
+
+        location / {
+            default_type application/json;
+            return 404 '{"error":"not found"}\n';
+        }
+    }
+}

@@ -1,0 +1,48 @@
+#!/bin/sh
+# Gerencia as API keys do gateway (rode dentro do container, ex.: console do Portainer).
+#   gw-keys add <cliente>     gera uma chave nova (exibida uma única vez)
+#   gw-keys revoke <cliente>  remove todas as chaves do cliente
+#   gw-keys list              lista os clientes cadastrados
+set -eu
+
+MAP=/etc/nginx/secrets/api_keys.map
+
+usage() { sed -n '3,5p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+valid_name() {
+  case "$1" in
+    ''|*[!A-Za-z0-9_.-]*) echo "Nome inválido: use [A-Za-z0-9_.-]" >&2; exit 1 ;;
+  esac
+}
+
+reload() {
+  nginx -t -q 2>/dev/null && nginx -s reload 2>/dev/null && sleep 1  # reload é assíncrono
+  echo "Gateway recarregado."
+}
+
+case "${1:-}" in
+  add)
+    [ $# -eq 2 ] || usage
+    valid_name "$2"
+    key="sk-gw-$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    printf '"Bearer %s" %s;\n' "$key" "$2" >> "$MAP"
+    echo "API key para '$2' (guarde agora, não será exibida de novo):"
+    echo
+    echo "  $key"
+    echo
+    reload
+    ;;
+  revoke)
+    [ $# -eq 2 ] || usage
+    valid_name "$2"
+    before=$(wc -l < "$MAP")
+    awk -v n="$2;" '$3 != n' "$MAP" > "$MAP.tmp"
+    cat "$MAP.tmp" > "$MAP" && rm -f "$MAP.tmp"
+    echo "Removidas $((before - $(wc -l < "$MAP"))) chave(s) de '$2'."
+    reload
+    ;;
+  list)
+    awk '{ sub(/;$/, "", $3); print $3 }' "$MAP" | sort | uniq -c | awk '{ printf "%-30s %s chave(s)\n", $2, $1 }'
+    ;;
+  *) usage ;;
+esac
