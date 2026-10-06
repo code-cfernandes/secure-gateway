@@ -1,0 +1,50 @@
+# Stack Redis + RedisInsight. No Portainer: Stacks > Add stack > Repository,
+# compose path `stacks/redis/docker-compose.yml`. Implante DEPOIS da stack do gateway (que cria a services-net).
+services:
+  redis:
+    image: redis:8-alpine
+    container_name: redis
+    restart: unless-stopped
+    # Sem "ports": acessível só pela services-net (RedisInsight, túnel).
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?defina REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --appendonly yes"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - services-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: redisinsight
+    restart: unless-stopped
+    environment:
+      # Conexão com o Redis já cadastrada na primeira abertura.
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_ALIAS: redis-dev
+      RI_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # Criptografa as senhas que o RedisInsight guarda no volume.
+      RI_ENCRYPTION_KEY: ${REDISINSIGHT_ENCRYPTION_KEY:?defina REDISINSIGHT_ENCRYPTION_KEY}
+      RI_ACCEPT_TERMS_AND_CONDITIONS: "true"
+    volumes:
+      - redisinsight-data:/data
+    networks:
+      - services-net
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis-data:
+  redisinsight-data:
+
+networks:
+  services-net:
+    external: true

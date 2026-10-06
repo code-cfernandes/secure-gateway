@@ -21,7 +21,8 @@ Camada de segurança para serviços self-hosted (Ollama, Redis, ...) publicados 
 ## 1. Preparar os serviços
 
 Os serviços **não podem publicar portas** (`ports:`). Eles só precisam estar na rede `services-net`.
-Essa rede é criada pela stack do gateway; nas stacks do Ollama/Redis, declare-a como externa:
+Essa rede é criada pela stack do gateway; na stack do Ollama, declare-a como externa
+(Redis e PostgreSQL já têm stacks prontas em `stacks/`):
 
 ```yaml
 services:
@@ -31,12 +32,6 @@ services:
     # sem "ports:"
     networks: [services-net]
     volumes: [ollama:/root/.ollama]
-
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    command: redis-server --requirepass ${REDIS_PASSWORD}
-    networks: [services-net]
 
 networks:
   services-net:
@@ -125,6 +120,46 @@ Aplicações em outros servidores fazem o mesmo (por exemplo, `cloudflared` como
 ```bash
 ./scripts/smoke-test.sh https://services.<seu-domínio> <api-key>
 ```
+
+## PostgreSQL + pgAdmin
+
+Stack separada em `stacks/postgres/`: PostgreSQL 18 sem portas publicadas e pgAdmin como interface para criar, alterar e truncar tabelas.
+
+| Camada | Proteção |
+|---|---|
+| Cloudflare Access | Só os e-mails liberados chegam à tela de login do pgAdmin |
+| pgAdmin | Login próprio + MFA por app autenticador, obrigatório no primeiro acesso |
+| PostgreSQL | Usuário `app` dono do banco `app`, **sem** superusuário; senha (scram) exigida em toda conexão TCP |
+
+**Implantar** (depois da stack do gateway): Portainer → *Stacks → Add stack → Repository*, compose path `stacks/postgres/docker-compose.yml`, variáveis de `stacks/postgres/.env.example` (`POSTGRES_SUPERUSER_PASSWORD`, `APP_DB_PASSWORD`, `PGADMIN_EMAIL`, `PGADMIN_PASSWORD`).
+
+**Publicar o pgAdmin**:
+1. No túnel, adicione o Public Hostname `pgadmin.<seu-domínio>` → `HTTP` → `pgadmin:80`.
+2. *Access → Applications → Self-hosted*, hostname `pgadmin.<seu-domínio>`, policy **Allow** com *Emails* = os seus endereços (login por código no e-mail ou Google).
+
+**Primeiro acesso**: entre com `PGADMIN_EMAIL`/`PGADMIN_PASSWORD`, cadastre o MFA e registre o servidor:
+*Add New Server* → Host `postgres`, porta `5432`, banco `app`, usuário `app`, senha `APP_DB_PASSWORD`.
+Para truncar: clique com o botão direito na tabela → *Truncate*.
+
+O usuário `app` pode criar, alterar, truncar e apagar tabelas no banco `app`, mas não cria bancos/usuários nem acessa o banco `postgres`. Use o superusuário só para manutenção (`docker exec -it postgres psql -U postgres`).
+
+> `APP_DB_*` e o script de permissões rodam só na **primeira** inicialização (volume vazio). Mudar a variável depois não altera o banco.
+
+**Aplicações externas** acessam o Postgres como o Redis: hostname `TCP` → `postgres:5432` no túnel, protegido por Access com service token, e `cloudflared access tcp --hostname pg.<seu-domínio> --url 127.0.0.1:5432` no cliente.
+
+## Redis + RedisInsight
+
+Stack em `stacks/redis/`: Redis 8 com senha e persistência (AOF), sem portas publicadas, e RedisInsight como interface para navegar, editar e limpar chaves.
+
+**Implantar** (depois da stack do gateway): compose path `stacks/redis/docker-compose.yml`, variáveis `REDIS_PASSWORD` e `REDISINSIGHT_ENCRYPTION_KEY` (`openssl rand -hex 32`).
+
+**Publicar o RedisInsight**:
+1. No túnel: Public Hostname `redisinsight.<seu-domínio>` → `HTTP` → `redisinsight:5540`.
+2. *Access → Applications → Self-hosted* para esse hostname, policy **Allow** com os seus e-mails.
+
+O banco `redis-dev` já aparece cadastrado. Para limpar: *Browser* → filtrar por padrão (ex.: `sessao:*`) → *Bulk Actions → Delete*, ou `FLUSHDB` no *Workbench*/CLI.
+
+> O RedisInsight **não tem login próprio** e executa qualquer comando no Redis: o Cloudflare Access é a única barreira na frente dele. Nunca publique o hostname sem a aplicação do Access.
 
 ## Adicionando outro serviço HTTP
 

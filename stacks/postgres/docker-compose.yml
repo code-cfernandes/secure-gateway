@@ -1,0 +1,55 @@
+# Stack PostgreSQL + pgAdmin. No Portainer: Stacks > Add stack > Repository,
+# compose path `stacks/postgres/docker-compose.yml`. Implante DEPOIS da stack do gateway (que cria a services-net).
+services:
+  postgres:
+    build: .
+    image: secure-postgres:18
+    container_name: postgres
+    restart: unless-stopped
+    # Sem "ports": acessível só pela services-net (pgAdmin, gateway, túnel).
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?defina POSTGRES_SUPERUSER_PASSWORD}
+      APP_DB_NAME: ${APP_DB_NAME:-app}
+      APP_DB_USER: ${APP_DB_USER:-app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?defina APP_DB_PASSWORD}
+      # Exige senha (scram) em toda conexão TCP, inclusive 127.0.0.1 dentro do container.
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - pgdata:/var/lib/postgresql
+    networks:
+      - services-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?defina PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?defina PGADMIN_PASSWORD}
+      PGADMIN_DISABLE_POSTFIX: "true"
+      # Valores PGADMIN_CONFIG_* são literais Python.
+      PGADMIN_CONFIG_MFA_ENABLED: "True"
+      PGADMIN_CONFIG_MFA_FORCE_REGISTRATION: "True"
+      PGADMIN_CONFIG_MFA_SUPPORTED_METHODS: '["authenticator"]'
+      PGADMIN_CONFIG_UPGRADE_CHECK_ENABLED: "False"
+    volumes:
+      - pgadmin:/var/lib/pgadmin
+    networks:
+      - services-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  pgadmin:
+
+networks:
+  services-net:
+    external: true
